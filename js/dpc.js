@@ -126,7 +126,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const todayDate = new Date();
   const todayIso = toIsoLocal(todayDate);
-  const appVersion = "1.0.38";
+  const appVersion = "1.0.42";
+  const appReleaseDate = "2026-10-21";
   const appVersionFile = "app-version.json";
   const selectedDateStateKey = "dpc:selectedDate";
   const authRoleKey = "dpc:auth:role";
@@ -250,15 +251,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const info = await getBuildInfo();
 
     if (lastUpdateEl) {
-      const rawUpdatedAt = info && typeof info.updatedAt === "string" ? info.updatedAt : "";
+      const rawUpdatedAt = info && typeof info.updatedAt === "string" ? info.updatedAt : appReleaseDate;
       const parsedDate = rawUpdatedAt ? new Date(rawUpdatedAt) : null;
       if (parsedDate && Number.isFinite(parsedDate.getTime())) {
         const stamp = new Intl.DateTimeFormat("de-DE", {
           day: "2-digit",
           month: "2-digit",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit"
+          year: "numeric"
         }).format(parsedDate);
         lastUpdateEl.textContent = `Letztes Update: ${stamp}`;
       } else {
@@ -827,8 +826,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const normalizedMaterial = material.toUpperCase();
-      const isRhosealMaterial = normalizedMaterial === "RHOSEAL" || normalizedMaterial === "RHOSEAL HT";
-      if (isRhosealMaterial) {
+      const normalizedMaterialKey = normalizeSonderMaterialKey(material);
+      const isRohsealMaterial = normalizedMaterialKey === "ROHSEAL"
+        || normalizedMaterialKey === "ROHSEALHT"
+        || normalizedMaterialKey === "RHOSEAL"
+        || normalizedMaterialKey === "RHOSEALHT";
+      if (isRohsealMaterial) {
         const totalKg = diff * 25;
         rows.push([
           dept,
@@ -1001,7 +1004,12 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       let targetMax = baseMax;
-      if (isFriday && entry.tableTitle.includes("ABT.: KE") && (entry.rowName === "RHOSEAL" || entry.rowName === "RHOSEAL HT")) {
+      const rowMaterialKey = normalizeSonderMaterialKey(entry.rowName);
+      if (
+        isFriday
+        && entry.tableTitle.includes("ABT.: KE")
+        && (rowMaterialKey === "ROHSEAL" || rowMaterialKey === "ROHSEALHT" || rowMaterialKey === "RHOSEAL" || rowMaterialKey === "RHOSEALHT")
+      ) {
         targetMax = "15";
       }
       if (isFriday && entry.tableTitle.includes("STRAHLHAUS")) {
@@ -1111,7 +1119,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const daySelect = document.getElementById("daySelect");
 
   if (kwSelect || daySelect) {
-    selectedIso = canEditPastDays() ? getCurrentWeekFridayIso() : todayIso;
+    selectedIso = todayIso;
   }
   const saveStatus = document.getElementById("saveStatus");
   const menuBtn = document.getElementById("menuBtn");
@@ -1445,12 +1453,18 @@ document.addEventListener("DOMContentLoaded", () => {
     exportLocalFileBtn.addEventListener("click", () => {
       try {
         const payload = buildBackupPayload();
+        const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 16);
+        const filename = `dpc-backup-${stamp}.json`;
+        if (window.AndroidDpc && typeof window.AndroidDpc.saveBackup === "function") {
+          window.AndroidDpc.saveBackup(JSON.stringify(payload, null, 2), filename);
+          setStatus("Lokale JSON-Datei gespeichert", false);
+          return;
+        }
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
-        const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 16);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `dpc-backup-${stamp}.json`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -1942,6 +1956,8 @@ document.addEventListener("DOMContentLoaded", () => {
       "F240",
       "F280",
       "NABALOX",
+      "ROHSEAL",
+      "ROHSEALHT",
       "RHOSEAL",
       "RHOSEALHT",
       "LUDOX",
@@ -1955,6 +1971,8 @@ document.addEventListener("DOMContentLoaded", () => {
       "F280",
       "NABALOX",
       "Q1",
+      "ROHSEAL",
+      "ROHSEALHT",
       "RHOSEAL",
       "RHOSEALHT",
       "SF6000",
@@ -2147,6 +2165,56 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const initialRows = Array.from(table.querySelectorAll("tbody tr:not(.add-row-line)")).map((row) => serializeRow(row));
+    const rowsPerPage = 19;
+
+    const updateRowNumbers = () => {
+      table.querySelectorAll("tbody tr:not(.add-row-line)").forEach((row, index) => {
+        row.querySelector(".row-number").textContent = `${String(index + 1).padStart(2, "0")}. `;
+      });
+    };
+
+    // Print copies keep pagination independent of editing and stored business columns.
+    const clearPrintPages = () => {
+      document.querySelector(".material-print-pages")?.remove();
+      document.body.classList.remove("material-print-ready");
+    };
+    window.addEventListener("beforeprint", () => {
+      clearPrintPages();
+      const printPages = document.createElement("div");
+      printPages.className = "material-print-pages";
+      const rows = Array.from(table.querySelectorAll("tbody tr:not(.add-row-line)"));
+      for (let start = 0; start < Math.max(rows.length, 1); start += rowsPerPage) {
+        const page = document.createElement("section");
+        page.className = "material-print-sheet";
+        [".date-line", ".page > h1"].forEach((selector) => {
+          const element = document.querySelector(selector);
+          if (element) page.appendChild(element.cloneNode(true));
+        });
+        const copy = table.cloneNode(true);
+        const printRows = Array.from({ length: rowsPerPage }, (_, offset) => {
+          const index = start + offset;
+          const row = rows[index] ? rows[index].cloneNode(true) : createRow([]);
+          if (!rows[index]) {
+            // Empty writing lines exist only in the print copy, never in saved data.
+            row.querySelectorAll("input").forEach((input) => input.remove());
+          }
+          row.querySelector(".row-number").textContent = `${String(index + 1).padStart(2, "0")}. `;
+          return row;
+        });
+        copy.querySelector("tbody").replaceChildren(...printRows);
+        page.appendChild(copy);
+        const footer = document.querySelector("footer");
+        if (footer) page.appendChild(footer.cloneNode(true));
+        page.querySelector("#lastUpdate")?.remove();
+        // Avoid duplicate IDs in the document while the print dialog is open.
+        page.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
+        page.querySelectorAll("[contenteditable]").forEach((element) => element.removeAttribute("contenteditable"));
+        printPages.appendChild(page);
+      }
+      document.body.appendChild(printPages);
+      document.body.classList.add("material-print-ready");
+    });
+    window.addEventListener("afterprint", clearPrintPages);
 
     const selectRow = (row) => {
       if (!supportsRowSelection) {
@@ -2217,10 +2285,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!isDataRow(row) || config.storagePrefix !== "weing" || columnDefs.length !== 8) {
         return;
       }
-      const materialCell = row.querySelector("td:nth-child(5)");
-      const chargeCell = row.querySelector("td:nth-child(6)");
-      const palletCell = row.querySelector("td:nth-child(7)");
-      const amountCell = row.querySelector("td:nth-child(8)");
+      const materialCell = row.querySelector("td:nth-of-type(5)");
+      const chargeCell = row.querySelector("td:nth-of-type(6)");
+      const palletCell = row.querySelector("td:nth-of-type(7)");
+      const amountCell = row.querySelector("td:nth-of-type(8)");
       const materialValue = String(materialCell?.textContent || "").trim();
       const chargeValue = String(chargeCell?.textContent || "").trim();
       const palletValue = String(palletCell?.textContent || "").trim();
@@ -2236,14 +2304,14 @@ document.addEventListener("DOMContentLoaded", () => {
       const sameChargeRows = chargeToken === ""
         ? []
         : rows.filter((tableRow) => {
-            const tableChargeCell = tableRow.querySelector("td:nth-child(6)");
+            const tableChargeCell = tableRow.querySelector("td:nth-of-type(6)");
             const tableToken = normalizeChargeToken(tableChargeCell?.textContent || "");
             return tableToken !== "" && tableToken === chargeToken;
           });
 
       const groupPal1MischChecked = sameChargeRows.some((tableRow) => {
-        const tableMaterialCell = tableRow.querySelector("td:nth-child(5)");
-        const tablePalletCell = tableRow.querySelector("td:nth-child(7)");
+        const tableMaterialCell = tableRow.querySelector("td:nth-of-type(5)");
+        const tablePalletCell = tableRow.querySelector("td:nth-of-type(7)");
         const tableMaterial = String(tableMaterialCell?.textContent || "").trim();
         const tableNormalizedMaterial = normalizeProbeMaterial(tableMaterial);
         if (!tableMaterial || !isInMaterialSet(tableNormalizedMaterial, laborMischprobeMaterials)) {
@@ -2345,10 +2413,15 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         row.appendChild(td);
       }
+      const numberCell = document.createElement("th");
+      numberCell.className = "row-number";
+      numberCell.scope = "row";
+      row.insertBefore(numberCell, row.children[columnDefs.length === 8 ? 3 : 0]);
       return row;
     };
 
     const setReadonlyLocal = () => {
+      updateRowNumbers();
       const isPastDay = selectedIso < todayIso && !canEditPastDays();
       const lockForUserNonToday = isUserRole
         && (config.storagePrefix === "wvorbe" || config.storagePrefix === "weing")
@@ -2415,6 +2488,17 @@ document.addEventListener("DOMContentLoaded", () => {
           }
           bindRowInteractions(row);
         });
+      }
+
+      // Drop only surplus empty template rows; never truncate existing entries.
+      const loadedRows = Array.from(table.querySelectorAll("tbody tr:not(.add-row-line)"));
+      while (loadedRows.length > rowsPerPage) {
+        const lastRow = loadedRows[loadedRows.length - 1];
+        const isEmpty = serializeRow(lastRow).every((value, index) =>
+          columnDefs[index] === "check" ? value === "0" : value.trim() === ""
+        );
+        if (!isEmpty) break;
+        loadedRows.pop().remove();
       }
 
       const firstRow = table.querySelector("tbody tr:not(.add-row-line)");
