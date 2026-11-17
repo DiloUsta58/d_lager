@@ -126,7 +126,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const todayDate = new Date();
   const todayIso = toIsoLocal(todayDate);
-  const appVersion = "1.0.42";
+  const appVersion = "1.0.44";
   const appReleaseDate = "2026-11-17";
   const appVersionFile = "app-version.json";
   const selectedDateStateKey = "dpc:selectedDate";
@@ -3266,6 +3266,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const normalizeChargeKey = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "");
+    const hasReferenceNumber = (value) => !/^[\s\-–—]*$/.test(String(value || ""));
     const rowsByCharge = new Map();
 
     for (let i = 0; i < localStorage.length; i += 1) {
@@ -3287,7 +3288,11 @@ document.addEventListener("DOMContentLoaded", () => {
           if (!normalized) {
             return;
           }
-          const [abt, material, charge] = normalized;
+          const [abt, material, charge, pallet] = normalized;
+          // Only complete charge/pallet references belong in the automatic list.
+          if (!hasReferenceNumber(charge) || !hasReferenceNumber(pallet)) {
+            return;
+          }
           const rawCharge = String(charge || "").trim();
           const chargeKey = normalizeChargeKey(rawCharge);
           if (!chargeKey) {
