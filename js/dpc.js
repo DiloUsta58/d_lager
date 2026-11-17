@@ -127,7 +127,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const todayDate = new Date();
   const todayIso = toIsoLocal(todayDate);
   const appVersion = "1.0.42";
-  const appReleaseDate = "2026-10-21";
+  const appReleaseDate = "2026-11-17";
   const appVersionFile = "app-version.json";
   const selectedDateStateKey = "dpc:selectedDate";
   const authRoleKey = "dpc:auth:role";
@@ -1372,6 +1372,7 @@ document.addEventListener("DOMContentLoaded", () => {
     saveStatus.classList.toggle("error", Boolean(isError));
   };
 
+  const manualChargesKey = "dpc:chargen:manual";
   const backupKeyPrefixes = [
     "dpc:index:",
     "dpc:wvorbe:",
@@ -1381,7 +1382,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "dpc:settings"
   ];
 
-  const isBackupKey = (key) => backupKeyPrefixes.some((prefix) => String(key).startsWith(prefix));
+  const isBackupKey = (key) => key === manualChargesKey || backupKeyPrefixes.some((prefix) => String(key).startsWith(prefix));
 
   const listDpcKeys = () => {
     const keys = [];
@@ -1403,17 +1404,22 @@ document.addEventListener("DOMContentLoaded", () => {
         storage[key] = value;
       }
     });
+    // An explicit empty list distinguishes new backups from older files that
+    // accidentally omitted manually added charges altogether.
+    if (!Object.prototype.hasOwnProperty.call(storage, manualChargesKey)) {
+      storage[manualChargesKey] = "[]";
+    }
     return {
       app: "dpc",
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
-      keyCount: keys.length,
+      keyCount: Object.keys(storage).length,
       storage
     };
   };
 
   const applyBackupPayload = (payload) => {
-    if (!payload || typeof payload !== "object" || !payload.storage || typeof payload.storage !== "object") {
+    if (!payload || typeof payload !== "object" || !payload.storage || typeof payload.storage !== "object" || Array.isArray(payload.storage)) {
       throw new Error("Ungültiges Backup-Format");
     }
     if (payload.app && payload.app !== "dpc") {
@@ -1426,6 +1432,17 @@ document.addEventListener("DOMContentLoaded", () => {
     if (incomingEntries.length === 0) {
       throw new Error("Backup enthält keine DPC-Daten");
     }
+    const hasManualCharges = incomingEntries.some(([key]) => key === manualChargesKey);
+    if (Number(payload.version) >= 3 && !hasManualCharges) {
+      throw new Error("Sicherung unvollständig: Chargen-Daten fehlen");
+    }
+    if (hasManualCharges) {
+      const charges = JSON.parse(incomingEntries.find(([key]) => key === manualChargesKey)[1]);
+      if (!Array.isArray(charges) || charges.some((row) => !row || typeof row !== "object" || Array.isArray(row)
+        || ["charge", "material", "article", "grain", "date"].some((field) => row[field] !== undefined && typeof row[field] !== "string"))) {
+        throw new Error("Ungültige Chargen-Daten in der Sicherung");
+      }
+    }
 
     const existingSnapshot = {};
     listDpcKeys().forEach((key) => {
@@ -1436,7 +1453,10 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     try {
-      listDpcKeys().forEach((key) => localStorage.removeItem(key));
+      listDpcKeys().forEach((key) => {
+        // Legacy backups never contained manual charges: retain the local list.
+        if (key !== manualChargesKey || hasManualCharges) localStorage.removeItem(key);
+      });
       incomingEntries.forEach(([key, value]) => {
         localStorage.setItem(key, value);
       });
@@ -1450,17 +1470,38 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   if (exportLocalFileBtn) {
-    exportLocalFileBtn.addEventListener("click", () => {
+    exportLocalFileBtn.addEventListener("click", async () => {
+      exportLocalFileBtn.disabled = true;
       try {
         const payload = buildBackupPayload();
-        const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 16);
+        const stamp = new Date().toISOString().replace(/[:T.]/g, "-").replace(/Z$/, "");
         const filename = `dpc-backup-${stamp}.json`;
+        const json = JSON.stringify(payload, null, 2);
         if (window.AndroidDpc && typeof window.AndroidDpc.saveBackup === "function") {
-          window.AndroidDpc.saveBackup(JSON.stringify(payload, null, 2), filename);
-          setStatus("Lokale JSON-Datei gespeichert", false);
+          window.AndroidDpc.saveBackup(json, filename);
+          setStatus("Datei an Android übergeben – bitte Speicherbestätigung beachten", false);
           return;
         }
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+          || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        if (isIOS && typeof navigator.share === "function" && typeof navigator.canShare === "function") {
+          const file = new File([json], filename, { type: "application/json" });
+          if (navigator.canShare({ files: [file] })) {
+            setStatus('Bitte „In Dateien sichern“ wählen und dort speichern', false);
+            try {
+              await navigator.share({ files: [file] });
+              setStatus("Datei übergeben – Speicherort bitte in der Dateien-App prüfen", false);
+              return;
+            } catch (error) {
+              if (error.name === "AbortError") {
+                setStatus("Speichern abgebrochen", false);
+                return;
+              }
+              // If sharing is unavailable, use the regular file download below.
+            }
+          }
+        }
+        const blob = new Blob([json], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -1468,10 +1509,13 @@ document.addEventListener("DOMContentLoaded", () => {
         document.body.appendChild(a);
         a.click();
         a.remove();
-        URL.revokeObjectURL(url);
-        setStatus("Lokale JSON-Datei gespeichert", false);
+        // Safari may read the URL later from its download UI. Keep it valid for
+        // this document's lifetime; the browser releases it on document unload.
+        setStatus("Download gestartet – bitte die Datei im Download-/Dateien-Ordner prüfen", false);
       } catch (error) {
         setStatus("Datei speichern fehlgeschlagen", true);
+      } finally {
+        exportLocalFileBtn.disabled = false;
       }
     });
   }
@@ -1489,12 +1533,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
       try {
         const text = await file.text();
-        const payload = JSON.parse(text);
+        const payload = JSON.parse(text.replace(/^\uFEFF/, ""));
         applyBackupPayload(payload);
         setStatus("Lokale JSON-Datei geladen", false);
         window.location.reload();
       } catch (error) {
-        setStatus("Datei laden fehlgeschlagen", true);
+        setStatus(`Datei laden fehlgeschlagen: ${error.message || "Datei nicht lesbar"}`, true);
       } finally {
         importFileInput.value = "";
       }
@@ -3273,7 +3317,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return a.charge.localeCompare(b.charge, "de");
     });
 
-    const manualKey = "dpc:chargen:manual";
+    const manualKey = manualChargesKey;
     const loadManual = () => {
       try {
         const raw = localStorage.getItem(manualKey);
@@ -3288,11 +3332,18 @@ document.addEventListener("DOMContentLoaded", () => {
         return [];
       }
     };
+    let manualSaveFailed = false;
     const saveManual = (rows) => {
       try {
         localStorage.setItem(manualKey, JSON.stringify(rows));
+        manualSaveFailed = false;
+        return true;
       } catch (error) {
-        // ignore
+        if (!manualSaveFailed) {
+          alert("Die Chargen konnten nicht gespeichert werden. Bitte diese Seite geöffnet lassen und freien Browserspeicher prüfen.");
+        }
+        manualSaveFailed = true;
+        return false;
       }
     };
 
@@ -3361,7 +3412,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const sourceRows = [...manualEntries, ...entriesFiltered].sort(sortByMaterial);
       const filtered = q
         ? sourceRows.filter((entry) => {
-            const combined = `${entry.charge} ${entry.material} ${entry.date}`.toLowerCase();
+            const combined = `${entry.charge} ${entry.material} ${entry.article || ""} ${entry.grain || ""} ${entry.date}`.toLowerCase();
             return combined.includes(q);
           })
         : sourceRows;
@@ -3369,7 +3420,7 @@ document.addEventListener("DOMContentLoaded", () => {
       tableBody.innerHTML = "";
       if (filtered.length === 0) {
         const tr = document.createElement("tr");
-        tr.innerHTML = "<td class=\"weing-data-note\" colspan=\"3\">Keine Chargen vorhanden</td>";
+        tr.innerHTML = "<td class=\"weing-data-note\" colspan=\"5\">Keine Chargen vorhanden</td>";
         tableBody.appendChild(tr);
         return;
       }
@@ -3378,33 +3429,32 @@ document.addEventListener("DOMContentLoaded", () => {
         const isManual = entry && entry._manual === true;
         tr.dataset.source = isManual ? "manual" : "auto";
         tr.dataset.id = String(entry?.id || "");
-        if (isManual) {
-          tr.innerHTML = `<td contenteditable="true">${entry.charge || ""}</td><td contenteditable="true">${entry.material || ""}</td><td contenteditable="true">${entry.date || ""}</td>`;
-        } else {
-          tr.innerHTML = `<td>${entry.charge}</td><td>${entry.material}</td><td>${entry.date}</td>`;
-        }
+        ["charge", "material", "article", "grain", "date"].forEach((field) => {
+          const cell = document.createElement("td");
+          cell.dataset.field = field;
+          cell.textContent = entry[field] || "";
+          if (isManual) cell.contentEditable = "true";
+          tr.appendChild(cell);
+        });
         tr.addEventListener("click", () => {
           Array.from(tableBody.querySelectorAll("tr")).forEach((row) => row.classList.remove("row-selected"));
           tr.classList.add("row-selected");
         });
         if (isManual) {
-          tr.querySelectorAll("td[contenteditable='true']").forEach(() => {
-            tr.addEventListener("input", () => {
-              const id = tr.dataset.id;
-              const updated = manualRows.map((row) => {
-                if (String(row.id) !== String(id)) {
-                  return row;
-                }
-                const [c1, c2, c3] = tr.querySelectorAll("td");
-                return {
-                  ...row,
-                  charge: c1?.textContent?.trim() || "",
-                  material: c2?.textContent?.trim() || "",
-                  date: c3?.textContent?.trim() || ""
-                };
-              });
-              saveManual(updated);
+          tr.addEventListener("input", () => {
+            const row = manualRows.find((item) => String(item.id) === tr.dataset.id);
+            if (!row) return;
+            const [charge, material, article, grain, date] = tr.querySelectorAll("td");
+            // Update the same objects used by add/remove/search, not just storage.
+            Object.assign(row, {
+              charge: charge.textContent.trim(),
+              material: material.textContent.trim(),
+              article: article.textContent.trim(),
+              grain: grain.textContent.trim(),
+              date: date.textContent.trim()
             });
+            saveManual(manualRows);
+            rebuildManual();
           });
         }
         tableBody.appendChild(tr);
@@ -3422,7 +3472,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (addBtn) {
       addBtn.addEventListener("click", () => {
         const id = `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const newRow = { id, charge: "", material: "", date: "", _manual: true };
+        const newRow = { id, charge: "", material: "", article: "", grain: "", date: "", _manual: true };
         manualRows.push(newRow);
         saveManual(manualRows);
         rebuildManual();
@@ -3461,9 +3511,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (backBtn) {
       backBtn.addEventListener("click", () => {
+        if (manualSaveFailed && !saveManual(manualRows)) {
+          alert("Die Chargen sind noch nicht gespeichert. Die Seite bleibt geöffnet, damit Ihre Eingaben erhalten bleiben.");
+          return;
+        }
         window.location.href = "aufg.html";
       });
     }
+    window.addEventListener("beforeunload", (event) => {
+      if (manualSaveFailed) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    });
   };
 
   initChargenDataPage();
