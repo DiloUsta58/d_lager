@@ -1439,7 +1439,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (hasManualCharges) {
       const charges = JSON.parse(incomingEntries.find(([key]) => key === manualChargesKey)[1]);
       if (!Array.isArray(charges) || charges.some((row) => !row || typeof row !== "object" || Array.isArray(row)
-        || ["charge", "material", "article", "grain", "date"].some((field) => row[field] !== undefined && typeof row[field] !== "string"))) {
+        || ["charge", "material", "date"].some((field) => row[field] !== undefined && typeof row[field] !== "string"))) {
         throw new Error("Ungültige Chargen-Daten in der Sicherung");
       }
     }
@@ -3412,7 +3412,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const sourceRows = [...manualEntries, ...entriesFiltered].sort(sortByMaterial);
       const filtered = q
         ? sourceRows.filter((entry) => {
-            const combined = `${entry.charge} ${entry.material} ${entry.article || ""} ${entry.grain || ""} ${entry.date}`.toLowerCase();
+            const combined = `${entry.charge} ${entry.material} ${entry.date}`.toLowerCase();
             return combined.includes(q);
           })
         : sourceRows;
@@ -3420,7 +3420,7 @@ document.addEventListener("DOMContentLoaded", () => {
       tableBody.innerHTML = "";
       if (filtered.length === 0) {
         const tr = document.createElement("tr");
-        tr.innerHTML = "<td class=\"weing-data-note\" colspan=\"5\">Keine Chargen vorhanden</td>";
+        tr.innerHTML = "<td class=\"weing-data-note\" colspan=\"3\">Keine Chargen vorhanden</td>";
         tableBody.appendChild(tr);
         return;
       }
@@ -3429,9 +3429,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const isManual = entry && entry._manual === true;
         tr.dataset.source = isManual ? "manual" : "auto";
         tr.dataset.id = String(entry?.id || "");
-        ["charge", "material", "article", "grain", "date"].forEach((field) => {
+        ["charge", "material", "date"].forEach((field) => {
           const cell = document.createElement("td");
-          cell.dataset.field = field;
           cell.textContent = entry[field] || "";
           if (isManual) cell.contentEditable = "true";
           tr.appendChild(cell);
@@ -3444,13 +3443,11 @@ document.addEventListener("DOMContentLoaded", () => {
           tr.addEventListener("input", () => {
             const row = manualRows.find((item) => String(item.id) === tr.dataset.id);
             if (!row) return;
-            const [charge, material, article, grain, date] = tr.querySelectorAll("td");
+            const [charge, material, date] = tr.querySelectorAll("td");
             // Update the same objects used by add/remove/search, not just storage.
             Object.assign(row, {
               charge: charge.textContent.trim(),
               material: material.textContent.trim(),
-              article: article.textContent.trim(),
-              grain: grain.textContent.trim(),
               date: date.textContent.trim()
             });
             saveManual(manualRows);
@@ -3472,7 +3469,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (addBtn) {
       addBtn.addEventListener("click", () => {
         const id = `m-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const newRow = { id, charge: "", material: "", article: "", grain: "", date: "", _manual: true };
+        const newRow = { id, charge: "", material: "", date: "", _manual: true };
         manualRows.push(newRow);
         saveManual(manualRows);
         rebuildManual();
