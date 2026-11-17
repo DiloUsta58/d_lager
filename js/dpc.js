@@ -126,7 +126,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const todayDate = new Date();
   const todayIso = toIsoLocal(todayDate);
-  const appVersion = "1.0.44";
+  const appVersion = "1.0.49";
   const appReleaseDate = "2026-11-17";
   const appVersionFile = "app-version.json";
   const selectedDateStateKey = "dpc:selectedDate";
@@ -763,7 +763,8 @@ document.addEventListener("DOMContentLoaded", () => {
     18: 100,
     19: 20,
     20: 20,
-    25: 5
+    25: 5,
+    30: 50
   };
 
   const sonderMaterialConstants = {
@@ -854,7 +855,8 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       if (isFmPowergrTable(entry.tableTitle)) {
-        const totalPieces = diff * 5;
+        const packSize = packSizeByPosition[extractPositionNumber(entry.rowLabel)] || 5;
+        const totalPieces = diff * packSize;
         rows.push([
           dept,
           material,
@@ -1004,21 +1006,9 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       let targetMax = baseMax;
-      const rowMaterialKey = normalizeSonderMaterialKey(entry.rowName);
-      if (
-        isFriday
-        && entry.tableTitle.includes("ABT.: KE")
-        && (rowMaterialKey === "ROHSEAL" || rowMaterialKey === "ROHSEALHT" || rowMaterialKey === "RHOSEAL" || rowMaterialKey === "RHOSEALHT")
-      ) {
-        targetMax = "15";
-      }
       if (isFriday && entry.tableTitle.includes("STRAHLHAUS")) {
         targetMax = "2";
       }
-      if (isFriday && entry.tableTitle.includes("POWERGR") && entry.rowName === "POS. 25") {
-        targetMax = "15";
-      }
-
       entry.istMaxInput.dataset.currentMax = targetMax;
       const suffix = entry.istMaxInput.closest(".istmax-wrap")?.querySelector(".max-suffix");
       if (suffix) {
