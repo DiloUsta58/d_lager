@@ -61,6 +61,13 @@
 
   const isAuthenticated = () => sessionStorage.getItem(sessionKey) === "1";
   const setAuthenticated = (role) => {
+    // A successful login starts a new date selection; page navigation keeps it.
+    const now = new Date();
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    localStorage.setItem("dpc:selectedDate", todayIso);
+    sessionStorage.setItem("dpc:navigation:homeDate", todayIso);
+    localStorage.removeItem("dpc:weing:returnToPreview");
+    localStorage.removeItem("dpc:weing:returnToPreviewDate");
     sessionStorage.setItem(sessionKey, "1");
     sessionStorage.setItem(roleKey, String(role || "Admin"));
   };

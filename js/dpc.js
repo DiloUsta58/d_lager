@@ -111,6 +111,12 @@ document.addEventListener("DOMContentLoaded", () => {
     return getIsoWeekNumber(dec28);
   };
 
+  const getIsoWeekYear = (date) => {
+    const thursday = getWeekMonday(date);
+    thursday.setDate(thursday.getDate() + 3);
+    return thursday.getFullYear();
+  };
+
   const getDateFromIsoWeek = (year, week, weekday) => {
     const jan4 = new Date(year, 0, 4);
     const jan4Day = jan4.getDay() || 7;
@@ -126,7 +132,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const todayDate = new Date();
   const todayIso = toIsoLocal(todayDate);
-  const appVersion = "1.0.53";
+  const appVersion = "1.0.58";
   const appReleaseDate = "2026-11-18";
   const appVersionFile = "app-version.json";
   const selectedDateStateKey = "dpc:selectedDate";
@@ -219,11 +225,16 @@ document.addEventListener("DOMContentLoaded", () => {
     friday.setDate(monday.getDate() + 4);
     return toIsoLocal(friday);
   };
+  const updateTodayButtonVisibility = () => {
+    const button = document.getElementById("todayBtn");
+    if (button) button.hidden = selectedIso === toIsoLocal(new Date());
+  };
   const renderSelectedDate = () => {
     const label = deDateFormatter.format(fromIsoLocal(selectedIso));
     dateTargets.forEach((el) => {
       el.textContent = label;
     });
+    updateTodayButtonVisibility();
     updateWeingInfo();
   };
 
@@ -1552,6 +1563,10 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         sessionStorage.removeItem("dpc:auth:ok");
         sessionStorage.removeItem(authRoleKey);
+        sessionStorage.removeItem(homeDateStateKey);
+        localStorage.removeItem(selectedDateStateKey);
+        localStorage.removeItem("dpc:weing:returnToPreview");
+        localStorage.removeItem("dpc:weing:returnToPreviewDate");
       } catch (error) {
         // ignore storage issues and continue with redirect
       }
@@ -1752,12 +1767,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const minYear = 2026;
   const selectedDateInitial = fromIsoLocal(selectedIso);
-  // The Thursday determines the ISO week year, including dates around New Year.
-  const selectedWeekThursday = getWeekMonday(selectedDateInitial);
-  selectedWeekThursday.setDate(selectedWeekThursday.getDate() + 3);
+  const currentWeekYear = getIsoWeekYear(todayDate);
   let selectedYear = isUserRole
-    ? todayDate.getFullYear()
-    : Math.max(minYear, selectedWeekThursday.getFullYear());
+    ? currentWeekYear
+    : Math.max(minYear, getIsoWeekYear(selectedDateInitial));
   const currentIsoWeek = getIsoWeekNumber(todayDate);
   let selectedWeek = isUserRole ? currentIsoWeek : getIsoWeekNumber(selectedDateInitial);
 
@@ -1767,6 +1780,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const weekDays = getWorkWeekByIso(year, week);
+    // Keep today's selection available when login occurs on a weekend.
+    if (selectedIso === todayIso && year === currentWeekYear && week === currentIsoWeek
+      && !weekDays.some((date) => toIsoLocal(date) === todayIso)) {
+      weekDays.push(todayDate);
+    }
     daySelect.innerHTML = "";
 
     weekDays.forEach((date) => {
@@ -1783,7 +1801,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const hasToday = weekDays.some((d) => toIsoLocal(d) === todayIso);
     if (hasSelected) {
       selectedIso = selectedIso;
-    } else if (hasToday && year === todayDate.getFullYear()) {
+    } else if (hasToday && year === currentWeekYear) {
       selectedIso = todayIso;
     } else {
       selectedIso = toIsoLocal(weekDays[0]);
@@ -1797,7 +1815,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const weeksInYear = getIsoWeeksInYear(year);
-    const todayYear = todayDate.getFullYear();
+    const todayYear = currentWeekYear;
     const maxVisibleWeek = isUserRole
       ? currentIsoWeek
       : (year < todayYear ? weeksInYear : (year === todayYear ? currentIsoWeek : 1));
@@ -1887,6 +1905,21 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  const todayBtn = document.getElementById("todayBtn");
+  if (todayBtn) {
+    window.addEventListener("focus", updateTodayButtonVisibility);
+    window.addEventListener("pageshow", updateTodayButtonVisibility);
+    document.addEventListener("visibilitychange", updateTodayButtonVisibility);
+    todayBtn.addEventListener("click", () => {
+      const currentDateIso = toIsoLocal(new Date());
+      if (selectedIso === currentDateIso) return;
+      selectedIso = currentDateIso;
+      persistSelectedDate();
+      // Reinitialize date limits as well if this page stayed open overnight.
+      window.location.reload();
+    });
+  }
+
   if (kwSelect) {
     kwSelect.addEventListener("change", () => {
       const parsedWeek = Number.parseInt(kwSelect.value, 10);
@@ -1933,7 +1966,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       selectedYear += 1;
-      if (selectedYear === todayDate.getFullYear()) {
+      if (selectedYear === currentWeekYear) {
         selectedWeek = currentIsoWeek;
       } else {
         selectedWeek = 1;
