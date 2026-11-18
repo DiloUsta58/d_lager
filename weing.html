@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="css/style.css" />
   <link rel="icon" href="icons/favicon.ico">
 </head>
-<body class="weing-page">
+<body class="weing-page weing-entry-page">
   <div class="page-wrap">
   <div class="page">
     <div class="date-line"><span>Datum:</span><span class="line current-date"></span></div>
@@ -41,6 +41,8 @@
       </div>
     </div>
 
+    <p id="weingScrollHint" class="weing-scroll-hint">↔ Tabelle nach links oder rechts wischen</p>
+    <div class="weing-table-scroll" role="region" aria-label="Wareneingangstabelle" tabindex="0">
     <table id="weingTable" class="editable-grid-table weing-proben-table">
       <colgroup>
         <col style="width:6%">
@@ -76,31 +78,28 @@
         <tr><td></td><td></td><td></td><th class="row-number" scope="row">02. </th><td></td><td></td><td></td><td></td><td></td></tr>
         <tr><td></td><td></td><td></td><th class="row-number" scope="row">03. </th><td></td><td></td><td></td><td></td><td></td></tr>
         <tr><td></td><td></td><td></td><th class="row-number" scope="row">04. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">05. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">06. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">07. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">08. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">09. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">10. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">11. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">12. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">13. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">14. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">15. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">16. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">17. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">18. </th><td></td><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><th class="row-number" scope="row">19. </th><td></td><td></td><td></td><td></td><td></td></tr>
         <tr class="add-row-line">
           <td colspan="9">
+            <span class="weing-row-actions">
             <button id="addWeingRowBtn" type="button" aria-label="Zeile hinzufügen">+</button>
             <span class="row-line-label"></span>
             <button id="removeWeingRowBtn" type="button" aria-label="Ausgewählte Zeile entfernen">-</button>
             <span class="row-line-label"></span>
+            </span>
           </td>
         </tr>
       </tbody>
     </table>
+    </div>
+    <dialog id="weingDeleteDialog" class="weing-delete-dialog" aria-labelledby="weingDeleteQuestion">
+      <form method="dialog">
+        <p id="weingDeleteQuestion">Daten vorhanden, wirklich entfernen und Daten löschen?</p>
+        <div class="weing-delete-actions">
+          <button type="submit" value="no" autofocus>Nein</button>
+          <button type="submit" value="yes">Ja</button>
+        </div>
+      </form>
+    </dialog>
     <footer>
       <div id="kimlik">© Dilaver Bölükbaşı</div>
       <div id="lastUpdate"></div>
