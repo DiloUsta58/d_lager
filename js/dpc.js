@@ -126,10 +126,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const todayDate = new Date();
   const todayIso = toIsoLocal(todayDate);
-  const appVersion = "1.0.49";
-  const appReleaseDate = "2026-11-17";
+  const appVersion = "1.0.53";
+  const appReleaseDate = "2026-11-18";
   const appVersionFile = "app-version.json";
   const selectedDateStateKey = "dpc:selectedDate";
+  const homeDateStateKey = "dpc:navigation:homeDate";
+  const isHomePage = !!document.getElementById("daySelect");
   const authRoleKey = "dpc:auth:role";
   const currentAuthRole = (() => {
     try {
@@ -152,7 +154,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let buildInfoCache = null;
   let selectedIso = todayIso;
   try {
-    const storedSelectedIso = localStorage.getItem(selectedDateStateKey);
+    const storedSelectedIso = (isHomePage && sessionStorage.getItem(homeDateStateKey))
+      || localStorage.getItem(selectedDateStateKey);
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(storedSelectedIso || ""))) {
       selectedIso = String(storedSelectedIso);
     }
@@ -315,6 +318,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const persistSelectedDate = () => {
     try {
       localStorage.setItem(selectedDateStateKey, selectedIso);
+      if (isHomePage) {
+        // Keep the home selection separate from dates opened in the preview.
+        sessionStorage.setItem(homeDateStateKey, selectedIso);
+        localStorage.removeItem("dpc:weing:returnToPreview");
+      }
     } catch (error) {
       // ignore storage errors in private mode / quota
     }
@@ -331,6 +339,13 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     return selectedIso;
   };
+
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted && isHomePage) {
+      // Browser Back may restore the page without rerunning its initialization.
+      persistSelectedDate();
+    }
+  });
 
   checkForAppUpdate();
 
@@ -1108,9 +1123,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const kwSelect = document.getElementById("kwSelect");
   const daySelect = document.getElementById("daySelect");
 
-  if (kwSelect || daySelect) {
-    selectedIso = todayIso;
-  }
   const saveStatus = document.getElementById("saveStatus");
   const menuBtn = document.getElementById("menuBtn");
   const menuDropdown = document.getElementById("menuDropdown");
@@ -1740,9 +1752,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const minYear = 2026;
   const selectedDateInitial = fromIsoLocal(selectedIso);
+  // The Thursday determines the ISO week year, including dates around New Year.
+  const selectedWeekThursday = getWeekMonday(selectedDateInitial);
+  selectedWeekThursday.setDate(selectedWeekThursday.getDate() + 3);
   let selectedYear = isUserRole
     ? todayDate.getFullYear()
-    : Math.max(minYear, selectedDateInitial.getFullYear());
+    : Math.max(minYear, selectedWeekThursday.getFullYear());
   const currentIsoWeek = getIsoWeekNumber(todayDate);
   let selectedWeek = isUserRole ? currentIsoWeek : getIsoWeekNumber(selectedDateInitial);
 
@@ -1817,15 +1832,6 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   if (kwSelect) {
-    if (isUserRole) {
-      selectedYear = todayDate.getFullYear();
-      selectedWeek = currentIsoWeek;
-      selectedIso = todayIso;
-    } else if (selectedYear === todayDate.getFullYear()) {
-      selectedWeek = currentIsoWeek;
-    } else {
-      selectedWeek = 1;
-    }
     fillKwForYear(selectedYear);
   } else if (daySelect) {
     fillDaysForKw(selectedYear, selectedWeek);
@@ -2200,6 +2206,53 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const initialRows = Array.from(table.querySelectorAll("tbody tr:not(.add-row-line)")).map((row) => serializeRow(row));
     const rowsPerPage = 19;
+    const minimumRows = config.minimumRows || 0;
+    const rowHasData = (row) => serializeRow(row).some((value, index) =>
+      columnDefs[index] === "check" ? value === "1" : value.trim() !== ""
+    );
+
+    const confirmRowRemoval = () => {
+      const dialog = document.getElementById(config.deleteDialogId);
+      if (!dialog || typeof dialog.showModal !== "function") {
+        return Promise.resolve(window.confirm("Daten vorhanden, wirklich entfernen und Daten löschen?"));
+      }
+      if (dialog.open) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        dialog.returnValue = "no";
+        dialog.addEventListener("close", () => resolve(dialog.returnValue === "yes"), { once: true });
+        dialog.showModal();
+      });
+    };
+
+    const ensureMinimumRows = () => {
+      let count = table.querySelectorAll("tbody tr:not(.add-row-line)").length;
+      while (count < minimumRows) {
+        const row = createRow([]);
+        addRowLine.before(row);
+        bindRowInteractions(row);
+        count += 1;
+      }
+    };
+
+    const removeDataRow = async (row) => {
+      const canRemove = () => isDataRow(row) && table.contains(row)
+        && !(selectedIso < todayIso && !canEditPastDays())
+        && !(isUserRole && selectedIso !== todayIso);
+      if (!canRemove()) return;
+      const hasData = rowHasData(row);
+      if (config.confirmRowRemoval && hasData && !await confirmRowRemoval()) return;
+      if (!canRemove()) return;
+      if (!hasData && table.querySelectorAll("tbody tr:not(.add-row-line)").length <= minimumRows) {
+        setStatusLocal(`Mindestens ${minimumRows} Zeilen bleiben erhalten`, false);
+        return;
+      }
+      const next = isDataRow(row.nextElementSibling) ? row.nextElementSibling : row.previousElementSibling;
+      row.remove();
+      ensureMinimumRows();
+      setDirty(true);
+      selectRow(isDataRow(next) ? next : table.querySelector("tbody tr:not(.add-row-line)"));
+      setReadonlyLocal();
+    };
 
     const updateRowNumbers = () => {
       table.querySelectorAll("tbody tr:not(.add-row-line)").forEach((row, index) => {
@@ -2288,11 +2341,7 @@ document.addEventListener("DOMContentLoaded", () => {
       inlineBtn.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        row.remove();
-        setDirty(true);
-        const nextRow = table.querySelector("tbody tr:not(.add-row-line)");
-        selectRow(nextRow || null);
-        setReadonlyLocal();
+        void removeDataRow(row);
       });
       targetCell.appendChild(inlineBtn);
     };
@@ -2535,6 +2584,7 @@ document.addEventListener("DOMContentLoaded", () => {
         loadedRows.pop().remove();
       }
 
+      ensureMinimumRows();
       const firstRow = table.querySelector("tbody tr:not(.add-row-line)");
       selectRow(firstRow || null);
       setReadonlyLocal();
@@ -2716,7 +2766,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!Array.isArray(rows)) {
         return false;
       }
-      return rows.some((row) => Array.isArray(row) && row.some((cell) => String(cell || "").trim() !== ""));
+      return rows.some((row) => Array.isArray(row) && row.some((cell, index) => {
+        const value = String(cell || "").trim();
+        return columnDefs[index] === "check" ? /^(1|true|x)$/i.test(value) : value !== "";
+      }));
     };
 
     const loadLocal = () => {
@@ -2752,7 +2805,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const data = JSON.parse(raw);
         const manualRows = Array.isArray(data.rows) ? data.rows : [];
         const normalizedManualRows = normalizeRows(manualRows);
-        if (hasMeaningfulRows(manualRows)) {
+        if (hasMeaningfulRows(normalizedManualRows)) {
           if (config.storagePrefix === "wvorbe" && hasMeaningfulRows(normalizedAutoRows)) {
             const manualKeys = new Set(normalizedManualRows.map((row) => getRowKey(row)).filter((key) => key !== ""));
             const lockedMaterialKeys = new Set(
@@ -2863,16 +2916,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (removeRowBtn) {
       removeRowBtn.addEventListener("click", () => {
-        if (!selectedRow || !isDataRow(selectedRow)) {
-          return;
-        }
-        const next = selectedRow.nextElementSibling && !selectedRow.nextElementSibling.classList.contains("add-row-line")
-          ? selectedRow.nextElementSibling
-          : selectedRow.previousElementSibling;
-        selectedRow.remove();
-        setDirty(true);
-        selectRow(isDataRow(next) ? next : table.querySelector("tbody tr:not(.add-row-line)"));
-        setReadonlyLocal();
+        void removeDataRow(selectedRow);
       });
     }
 
@@ -3014,6 +3058,9 @@ document.addEventListener("DOMContentLoaded", () => {
     enableInlineRowRemove: false,
     backBtnId: "weingBackBtn",
     storagePrefix: "weing",
+    minimumRows: 4,
+    confirmRowRemoval: true,
+    deleteDialogId: "weingDeleteDialog",
     columnDefs: ["check", "check", "check", "text", "text", "text", "text", "text"]
   });
 
@@ -3053,8 +3100,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const currentWeek = getIsoWeekNumber(todayDate);
-    const currentYear = todayDate.getFullYear();
-    const maxWeek = Math.min(getIsoWeeksInYear(currentYear), currentWeek);
+    const previewThursday = getWeekMonday(fromIsoLocal(selectedIso));
+    previewThursday.setDate(previewThursday.getDate() + 3);
+    const currentYear = previewThursday.getFullYear();
+    const maxWeek = currentYear < todayDate.getFullYear()
+      ? getIsoWeeksInYear(currentYear)
+      : (currentYear === todayDate.getFullYear() ? currentWeek : 1);
+    const initialWeek = Math.min(getIsoWeekNumber(fromIsoLocal(selectedIso)), maxWeek);
+    localStorage.removeItem("dpc:weing:returnToPreview");
 
     kwSelect.innerHTML = "";
     for (let week = 1; week <= maxWeek; week += 1) {
@@ -3063,7 +3116,7 @@ document.addEventListener("DOMContentLoaded", () => {
       option.textContent = `KW ${String(week).padStart(2, "0")}`;
       kwSelect.appendChild(option);
     }
-    kwSelect.value = String(currentWeek);
+    kwSelect.value = String(initialWeek);
 
     const normalizeWeingRow = (row) => {
       if (!Array.isArray(row)) {
@@ -3188,7 +3241,8 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         daysBody.appendChild(tr);
       });
-      const initial = firstWithData || daysBody.querySelector("tr");
+      const initial = daysBody.querySelector(`tr[data-iso="${selectedIso}"]`)
+        || firstWithData || daysBody.querySelector("tr");
       if (initial) {
         initial.classList.add("active");
         renderPreview(initial.dataset.iso || toIsoLocal(days[0]));
@@ -3209,7 +3263,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    renderDays(currentWeek);
+    renderDays(initialWeek);
   };
 
   initWeingDataPage();
